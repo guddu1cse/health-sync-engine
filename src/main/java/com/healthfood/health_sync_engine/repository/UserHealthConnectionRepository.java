@@ -8,4 +8,5 @@ import java.util.Optional;
 @Repository
 public interface UserHealthConnectionRepository extends JpaRepository<UserHealthConnection, String> {
     Optional<UserHealthConnection> findByUserIdAndProvider(String userId, UserHealthConnection.HealthProvider provider);
+    java.util.List<UserHealthConnection> findByStatus(UserHealthConnection.ConnectionStatus status);
 }

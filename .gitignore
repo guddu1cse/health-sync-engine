@@ -1,0 +1,89 @@
+# =========================
+# Gradle
+# =========================
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# =========================
+# Spring Boot
+# =========================
+logs/
+*.log
+hs_err_pid*
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.*
+application-local.yml
+application-local.properties
+
+# =========================
+# IDEs
+# =========================
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code
+.vscode/
+
+# Eclipse / STS
+.classpath
+.project
+.settings/
+.factorypath
+
+# =========================
+# OS files
+# =========================
+
+# Mac
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =========================
+# Java
+# =========================
+*.class
+
+# =========================
+# Maven (if accidentally used)
+# =========================
+target/
+
+# =========================
+# Docker
+# =========================
+docker-compose.override.yml
+
+# =========================
+# Node / Frontend (if present)
+# =========================
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# =========================
+# Secrets / Keys
+# =========================
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+
+# =========================
+# Test Reports
+# =========================
+test-results/

@@ -28,6 +28,17 @@ public class GoogleFitSyncService {
     private static final Logger logger = LoggerFactory.getLogger(GoogleFitSyncService.class);
 
     public List<HealthMetricDaily> fetchActivity(String accessToken, LocalDateTime start, LocalDateTime end, String userId) {
+        List<String> dataTypes = new ArrayList<>(List.of(
+                "com.google.step_count.delta",
+                "com.google.calories.expended",
+                "com.google.distance.delta",
+                "com.google.active_minutes"
+        ));
+
+        return fetchWithRetry(accessToken, start, end, userId, dataTypes);
+    }
+
+    private List<HealthMetricDaily> fetchWithRetry(String accessToken, LocalDateTime start, LocalDateTime end, String userId, List<String> dataTypes) {
         try {
             Fitness fitness = new Fitness.Builder(
                     GoogleNetHttpTransport.newTrustedTransport(),
@@ -39,25 +50,29 @@ public class GoogleFitSyncService {
             long startTimeMillis = start.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
             long endTimeMillis = end.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
 
+            List<AggregateBy> aggregateByList = new ArrayList<>();
+            for (String type : dataTypes) {
+                aggregateByList.add(new AggregateBy().setDataTypeName(type));
+            }
+
             AggregateRequest request = new AggregateRequest()
-                    .setAggregateBy(List.of(
-                            new AggregateBy().setDataTypeName("com.google.step_count.delta"),
-                            new AggregateBy().setDataTypeName("com.google.calories.expended"),
-                            new AggregateBy().setDataTypeName("com.google.distance.delta"),
-                            new AggregateBy().setDataTypeName("com.google.active_minutes")
-                    ))
+                    .setAggregateBy(aggregateByList)
                     .setStartTimeMillis(startTimeMillis)
                     .setEndTimeMillis(endTimeMillis)
                     .setBucketByTime(new BucketByTime().setDurationMillis(86400000L)); // 1 day
 
+            logger.info("Executing Google Fit aggregate request for user: {} with types: {}", userId, dataTypes);
             AggregateResponse response = fitness.users().dataset().aggregate("me", request).execute();
+            
             List<HealthMetricDaily> metrics = new ArrayList<>();
 
-            if (response.getBucket() != null) {
+            if (response != null && response.getBucket() != null) {
                 for (AggregateBucket bucket : response.getBucket()) {
                     HealthMetricDaily metric = new HealthMetricDaily();
                     metric.setUserId(userId);
-                    metric.setDate(LocalDateTime.ofInstant(Instant.ofEpochMilli(bucket.getStartTimeMillis()), ZoneId.systemDefault()));
+                    // Truncate to start of day (midnight) for idempotency
+                    LocalDateTime dateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(bucket.getStartTimeMillis()), ZoneId.systemDefault());
+                    metric.setDate(dateTime.toLocalDate().atStartOfDay());
                     metric.setSourceProvider(UserHealthConnection.HealthProvider.GOOGLE_FIT);
 
                     if (bucket.getDataset() != null) {
@@ -66,7 +81,9 @@ public class GoogleFitSyncService {
                                 for (DataPoint point : dataset.getPoint()) {
                                     String type = point.getDataTypeName();
                                     if (type.contains("step_count")) {
-                                        metric.setSteps(metric.getSteps() + point.getValue().get(0).getIntVal());
+                                        int val = point.getValue().get(0).getIntVal();
+                                        metric.setSteps(metric.getSteps() + val);
+                                        logger.debug("Bucket {} steps increased by {} to {}", metric.getDate(), val, metric.getSteps());
                                     } else if (type.contains("calories")) {
                                         metric.setCalories(metric.getCalories() + point.getValue().get(0).getFpVal());
                                     } else if (type.contains("distance")) {
@@ -79,11 +96,38 @@ public class GoogleFitSyncService {
                         }
                     }
                     metrics.add(metric);
+                    logger.info("Bucket for {}: Steps={}, Calories={}, Minutes={}", 
+                        metric.getDate(), metric.getSteps(), metric.getCalories(), metric.getActiveMinutes());
                 }
             }
             return metrics;
+        } catch (com.google.api.client.googleapis.json.GoogleJsonResponseException e) {
+            if (e.getStatusCode() == 403 && dataTypes.size() > 1) {
+                String message = e.getDetails().getMessage();
+                logger.warn("Permission denied for some Google Fit data: {}. Retrying with fewer types.", message);
+                
+                // Try to find which type failed from the message and remove it
+                List<String> nextTypes = new ArrayList<>(dataTypes);
+                boolean removed = false;
+                for (String type : dataTypes) {
+                    if (message.contains(type)) {
+                        nextTypes.remove(type);
+                        removed = true;
+                        break;
+                    }
+                }
+                
+                // If we couldn't identify the specific type, just remove distance as it's the most common 403
+                if (!removed) {
+                    nextTypes.remove("com.google.distance.delta");
+                }
+                
+                return fetchWithRetry(accessToken, start, end, userId, nextTypes);
+            }
+            logger.error("Google Fit API error: {} - {}", e.getStatusCode(), e.getDetails().getMessage());
+            return Collections.emptyList();
         } catch (Exception e) {
-            logger.error("Error fetching Google Fit data: {}", e.getMessage());
+            logger.error("Unexpected error fetching Google Fit data: {}", e.getMessage());
             return Collections.emptyList();
         }
     }

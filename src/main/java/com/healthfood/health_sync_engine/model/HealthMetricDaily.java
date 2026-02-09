@@ -3,6 +3,8 @@ package com.healthfood.health_sync_engine.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "health_metrics_daily")
@@ -20,6 +22,7 @@ public class HealthMetricDaily {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "source_provider", nullable = false)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     private UserHealthConnection.HealthProvider sourceProvider;
 
     private Integer steps = 0;
