@@ -22,10 +22,10 @@ public class UserHealthConnection {
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     private HealthProvider provider;
 
-    @Column(name = "access_token", nullable = false)
+    @Column(name = "access_token", nullable = false, columnDefinition = "TEXT")
     private String accessToken;
 
-    @Column(name = "refresh_token")
+    @Column(name = "refresh_token", columnDefinition = "TEXT")
     private String refreshToken;
 
     @Enumerated(EnumType.STRING)

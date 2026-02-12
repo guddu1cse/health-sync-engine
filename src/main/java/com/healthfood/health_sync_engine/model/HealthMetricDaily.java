@@ -25,12 +25,21 @@ public class HealthMetricDaily {
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     private UserHealthConnection.HealthProvider sourceProvider;
 
-    private Integer steps = 0;
-    private Double calories = 0.0;
-    private Double distance = 0.0;
+    private String steps = "0";
+    private String calories = "0";
+    private String distance = "0";
 
     @Column(name = "active_minutes")
-    private Integer activeMinutes = 0;
+    private String activeMinutes = "0";
+
+    @Column(name = "heart_rate")
+    private String heartRate;
+
+    @Column(name = "blood_oxygen")
+    private String bloodOxygen;
+
+    @Column(name = "sleep_hours")
+    private String sleepHours;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();

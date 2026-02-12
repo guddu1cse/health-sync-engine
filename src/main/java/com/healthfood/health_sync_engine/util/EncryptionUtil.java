@@ -7,8 +7,10 @@ import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HexFormat;
 
@@ -20,16 +22,40 @@ public class EncryptionUtil {
     private static final int TAG_LENGTH_BIT = 128;
 
     public EncryptionUtil(@Value("${app.encryption.key:a-very-secret-key-that-is-32-chars-long-!!!}") String secret) {
-        // We need to match scryptSync(secret, 'salt', 32) from Node.js
-        // For simplicity and since we control both ends, we can use a simpler derivation if we change Node.js
-        // OR we implement a basic PBKDF2/SHA256 that approximates it if possible.
-        // Node's scryptSync is very specific. Let's use a simpler SHA-256 hash of the secret for now to stay robust,
-        // but I should really update Node.js to use a simpler key derivation if I want perfect matching without scrypt libs in Java.
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             this.key = digest.digest(secret.getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize EncryptionUtil", e);
+        }
+    }
+
+    public String encrypt(String text) {
+        if (text == null) return null;
+        try {
+            byte[] iv = new byte[12];
+            new SecureRandom().nextBytes(iv);
+
+            SecretKey secretKey = new SecretKeySpec(this.key, "AES");
+            Cipher cipher = Cipher.getInstance(ALGORITHM);
+            GCMParameterSpec spec = new GCMParameterSpec(TAG_LENGTH_BIT, iv);
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey, spec);
+
+            byte[] encrypted = cipher.doFinal(text.getBytes(StandardCharsets.UTF_8));
+
+            // Java GCM doFinal: [encryptedData][authTag]
+            int tagLength = TAG_LENGTH_BIT / 8;
+            byte[] authTag = new byte[tagLength];
+            byte[] encryptedData = new byte[encrypted.length - tagLength];
+
+            System.arraycopy(encrypted, encrypted.length - tagLength, authTag, 0, tagLength);
+            System.arraycopy(encrypted, 0, encryptedData, 0, encryptedData.length);
+
+            return HexFormat.of().formatHex(iv) + ":" +
+                    HexFormat.of().formatHex(authTag) + ":" +
+                    HexFormat.of().formatHex(encryptedData);
+        } catch (Exception e) {
+            throw new RuntimeException("Encryption failed", e);
         }
     }
 

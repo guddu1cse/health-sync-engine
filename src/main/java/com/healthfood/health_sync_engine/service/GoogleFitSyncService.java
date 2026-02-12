@@ -32,7 +32,9 @@ public class GoogleFitSyncService {
                 "com.google.step_count.delta",
                 "com.google.calories.expended",
                 "com.google.distance.delta",
-                "com.google.active_minutes"
+                "com.google.active_minutes",
+                "com.google.heart_rate.bpm",
+                "com.google.oxygen_saturation"
         ));
 
         return fetchWithRetry(accessToken, start, end, userId, dataTypes);
@@ -82,22 +84,35 @@ public class GoogleFitSyncService {
                                     String type = point.getDataTypeName();
                                     if (type.contains("step_count")) {
                                         int val = point.getValue().get(0).getIntVal();
-                                        metric.setSteps(metric.getSteps() + val);
+                                        int current = Integer.parseInt(metric.getSteps() != null ? metric.getSteps() : "0");
+                                        metric.setSteps(String.valueOf(current + val));
                                         logger.debug("Bucket {} steps increased by {} to {}", metric.getDate(), val, metric.getSteps());
                                     } else if (type.contains("calories")) {
-                                        metric.setCalories(metric.getCalories() + point.getValue().get(0).getFpVal());
+                                        double val = point.getValue().get(0).getFpVal();
+                                        double current = Double.parseDouble(metric.getCalories() != null ? metric.getCalories() : "0.0");
+                                        metric.setCalories(String.valueOf(current + val));
                                     } else if (type.contains("distance")) {
-                                        metric.setDistance(metric.getDistance() + point.getValue().get(0).getFpVal());
+                                        double val = point.getValue().get(0).getFpVal();
+                                        double current = Double.parseDouble(metric.getDistance() != null ? metric.getDistance() : "0.0");
+                                        metric.setDistance(String.valueOf(current + val));
                                     } else if (type.contains("active_minutes")) {
-                                        metric.setActiveMinutes(metric.getActiveMinutes() + point.getValue().get(0).getIntVal());
+                                        int val = point.getValue().get(0).getIntVal();
+                                        int current = Integer.parseInt(metric.getActiveMinutes() != null ? metric.getActiveMinutes() : "0");
+                                        metric.setActiveMinutes(String.valueOf(current + val));
+                                    } else if (type.contains("heart_rate")) {
+                                        double val = point.getValue().get(0).getFpVal();
+                                        metric.setHeartRate(String.valueOf(val)); // For now just take the value from bucket
+                                    } else if (type.contains("oxygen_saturation")) {
+                                        double val = point.getValue().get(0).getFpVal();
+                                        metric.setBloodOxygen(String.valueOf(val));
                                     }
                                 }
                             }
                         }
                     }
                     metrics.add(metric);
-                    logger.info("Bucket for {}: Steps={}, Calories={}, Minutes={}", 
-                        metric.getDate(), metric.getSteps(), metric.getCalories(), metric.getActiveMinutes());
+                    logger.info("Bucket for {}: Steps={}, Calories={}, Minutes={}, HeartRate={}, SpO2={}", 
+                        metric.getDate(), metric.getSteps(), metric.getCalories(), metric.getActiveMinutes(), metric.getHeartRate(), metric.getBloodOxygen());
                 }
             }
             return metrics;
