@@ -1,5 +1,6 @@
 package com.healthfood.health_sync_engine.service;
 
+import com.google.api.client.googleapis.auth.oauth2.GoogleCredential;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.fitness.Fitness;
@@ -15,6 +16,7 @@ import com.healthfood.health_sync_engine.model.UserHealthConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -27,7 +29,13 @@ import java.util.Collections;
 public class GoogleFitSyncService {
     private static final Logger logger = LoggerFactory.getLogger(GoogleFitSyncService.class);
 
-    public List<HealthMetricDaily> fetchActivity(String accessToken, LocalDateTime start, LocalDateTime end, String userId) {
+    @Value("${google.client.id}")
+    private String clientId;
+
+    @Value("${google.client.secret}")
+    private String clientSecret;
+
+    public SyncResult fetchActivity(String accessToken, String refreshToken, LocalDateTime start, LocalDateTime end, String userId) {
         List<String> dataTypes = new ArrayList<>(List.of(
                 "com.google.step_count.delta",
                 "com.google.calories.expended",
@@ -37,15 +45,23 @@ public class GoogleFitSyncService {
                 "com.google.oxygen_saturation"
         ));
 
-        return fetchWithRetry(accessToken, start, end, userId, dataTypes);
+        return fetchWithRetry(accessToken, refreshToken, start, end, userId, dataTypes);
     }
 
-    private List<HealthMetricDaily> fetchWithRetry(String accessToken, LocalDateTime start, LocalDateTime end, String userId, List<String> dataTypes) {
+    private SyncResult fetchWithRetry(String accessToken, String refreshToken, LocalDateTime start, LocalDateTime end, String userId, List<String> dataTypes) {
         try {
+            GoogleCredential credential = new GoogleCredential.Builder()
+                    .setTransport(GoogleNetHttpTransport.newTrustedTransport())
+                    .setJsonFactory(GsonFactory.getDefaultInstance())
+                    .setClientSecrets(clientId, clientSecret)
+                    .build()
+                    .setAccessToken(accessToken)
+                    .setRefreshToken(refreshToken);
+
             Fitness fitness = new Fitness.Builder(
                     GoogleNetHttpTransport.newTrustedTransport(),
                     GsonFactory.getDefaultInstance(),
-                    request -> request.getHeaders().setAuthorization("Bearer " + accessToken))
+                    credential)
                     .setApplicationName("HealthAndFood")
                     .build();
 
@@ -66,6 +82,11 @@ public class GoogleFitSyncService {
             logger.info("Executing Google Fit aggregate request for user: {} with types: {}", userId, dataTypes);
             AggregateResponse response = fitness.users().dataset().aggregate("me", request).execute();
             
+            // Check if token was refreshed
+            String newAccessToken = credential.getAccessToken(); // Library updates this
+            // GoogleCredential generally doesn't get a new refresh token, but we check anyway if available
+            String newRefreshToken = credential.getRefreshToken(); 
+
             List<HealthMetricDaily> metrics = new ArrayList<>();
 
             if (response != null && response.getBucket() != null) {
@@ -82,6 +103,11 @@ public class GoogleFitSyncService {
                             if (dataset.getPoint() != null) {
                                 for (DataPoint point : dataset.getPoint()) {
                                     String type = point.getDataTypeName();
+                                    if (type == null || type.isEmpty()) {
+                                        type = dataset.getDataSourceId();
+                                    }
+                                    if (type == null) type = "";
+
                                     if (type.contains("step_count")) {
                                         int val = point.getValue().get(0).getIntVal();
                                         int current = Integer.parseInt(metric.getSteps() != null ? metric.getSteps() : "0");
@@ -101,7 +127,7 @@ public class GoogleFitSyncService {
                                         metric.setActiveMinutes(String.valueOf(current + val));
                                     } else if (type.contains("heart_rate")) {
                                         double val = point.getValue().get(0).getFpVal();
-                                        metric.setHeartRate(String.valueOf(val)); // For now just take the value from bucket
+                                        metric.setHeartRate(String.valueOf(val)); 
                                     } else if (type.contains("oxygen_saturation")) {
                                         double val = point.getValue().get(0).getFpVal();
                                         metric.setBloodOxygen(String.valueOf(val));
@@ -115,13 +141,14 @@ public class GoogleFitSyncService {
                         metric.getDate(), metric.getSteps(), metric.getCalories(), metric.getActiveMinutes(), metric.getHeartRate(), metric.getBloodOxygen());
                 }
             }
-            return metrics;
+            
+            return new SyncResult(metrics, newAccessToken, newRefreshToken);
+
         } catch (com.google.api.client.googleapis.json.GoogleJsonResponseException e) {
             if (e.getStatusCode() == 403 && dataTypes.size() > 1) {
                 String message = e.getDetails().getMessage();
                 logger.warn("Permission denied for some Google Fit data: {}. Retrying with fewer types.", message);
                 
-                // Try to find which type failed from the message and remove it
                 List<String> nextTypes = new ArrayList<>(dataTypes);
                 boolean removed = false;
                 for (String type : dataTypes) {
@@ -131,19 +158,33 @@ public class GoogleFitSyncService {
                         break;
                     }
                 }
-                
-                // If we couldn't identify the specific type, just remove distance as it's the most common 403
                 if (!removed) {
                     nextTypes.remove("com.google.distance.delta");
                 }
                 
-                return fetchWithRetry(accessToken, start, end, userId, nextTypes);
+                return fetchWithRetry(accessToken, refreshToken, start, end, userId, nextTypes);
             }
-            logger.error("Google Fit API error: {} - {}", e.getStatusCode(), e.getDetails().getMessage());
-            return Collections.emptyList();
+            logger.error("Google Fit API error: {} - {}", e.getStatusCode(), e.getDetails() != null ? e.getDetails().getMessage() : e.getMessage());
+            return new SyncResult(Collections.emptyList(), accessToken, refreshToken);
         } catch (Exception e) {
             logger.error("Unexpected error fetching Google Fit data: {}", e.getMessage());
-            return Collections.emptyList();
+            return new SyncResult(Collections.emptyList(), accessToken, refreshToken);
         }
+    }
+    
+    public static class SyncResult {
+        private final List<HealthMetricDaily> metrics;
+        private final String newAccessToken;
+        private final String newRefreshToken;
+
+        public SyncResult(List<HealthMetricDaily> metrics, String newAccessToken, String newRefreshToken) {
+            this.metrics = metrics;
+            this.newAccessToken = newAccessToken;
+            this.newRefreshToken = newRefreshToken;
+        }
+
+        public List<HealthMetricDaily> getMetrics() { return metrics; }
+        public String getNewAccessToken() { return newAccessToken; }
+        public String getNewRefreshToken() { return newRefreshToken; }
     }
 }

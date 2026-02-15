@@ -27,10 +27,10 @@ public class PeriodicSyncService {
     private String syncRequestedTopic;
 
     /**
-     * Periodic sync every 30 minutes.
-     * Cron: 0 seconds, 0/30 minutes, all hours, all days, all months, all weekdays
+     * Periodic sync every hour.
+     * Cron: 0 seconds, 0 minutes, all hours, all days, all months, all weekdays
      */
-    @Scheduled(cron = "0 0/30 * * * *")
+    @Scheduled(cron = "0 0 * * * *")
     public void triggerPeriodicSync() {
         logger.info("Starting scheduled periodic health sync for all connected users...");
 

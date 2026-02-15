@@ -87,3 +87,7 @@ yarn-error.log*
 # Test Reports
 # =========================
 test-results/
+
+/bin/
+/target/
+/build/

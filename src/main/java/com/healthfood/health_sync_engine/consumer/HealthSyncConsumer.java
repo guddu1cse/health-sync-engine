@@ -75,8 +75,11 @@ public class HealthSyncConsumer {
             connection.setSyncStatus(UserHealthConnection.HealthSyncStatus.SYNCING);
             connectionRepository.save(connection);
 
-            // Decrypt token
+            // Decrypt tokens
             String decryptedToken = encryptionUtil.decrypt(connection.getAccessToken());
+            String decryptedRefreshToken = connection.getRefreshToken() != null ? 
+                    encryptionUtil.decrypt(connection.getRefreshToken()) : null;
+
             logger.debug("Decrypted Access Token for user {}: {}...", userId, decryptedToken.substring(0, Math.min(10, decryptedToken.length())));
 
             LocalDateTime end = LocalDateTime.now();
@@ -84,8 +87,26 @@ public class HealthSyncConsumer {
 
             if (provider == UserHealthConnection.HealthProvider.GOOGLE_FIT) {
                 logger.info("Calling Google Fit API for user {} from {} to {}", userId, start, end);
-                List<HealthMetricDaily> metrics = googleFitSyncService.fetchActivity(decryptedToken, start, end, userId);
+                GoogleFitSyncService.SyncResult result = googleFitSyncService.fetchActivity(decryptedToken, decryptedRefreshToken, start, end, userId);
+                List<HealthMetricDaily> metrics = result.getMetrics();
                 logger.info("Received {} daily metric buckets from Google Fit", metrics.size());
+
+                // Update tokens if refreshed
+                boolean tokensUpdated = false;
+                if (result.getNewAccessToken() != null && !result.getNewAccessToken().equals(decryptedToken)) {
+                    logger.info("Updating refreshed Access Token for user {}", userId);
+                    connection.setAccessToken(encryptionUtil.encrypt(result.getNewAccessToken()));
+                    tokensUpdated = true;
+                }
+                if (result.getNewRefreshToken() != null && !result.getNewRefreshToken().equals(decryptedRefreshToken)) {
+                    logger.info("Updating refreshed Refresh Token for user {}", userId);
+                    connection.setRefreshToken(encryptionUtil.encrypt(result.getNewRefreshToken()));
+                    tokensUpdated = true;
+                }
+                if (tokensUpdated) {
+                    connection.setUpdatedAt(LocalDateTime.now());
+                    connectionRepository.save(connection);
+                }
 
                 for (HealthMetricDaily metric : metrics) {
                     // Encrypt metrics before saving
