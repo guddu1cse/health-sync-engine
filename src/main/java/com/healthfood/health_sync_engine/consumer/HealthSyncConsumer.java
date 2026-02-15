@@ -6,6 +6,7 @@ import com.healthfood.health_sync_engine.model.UserHealthConnection;
 import com.healthfood.health_sync_engine.repository.HealthMetricDailyRepository;
 import com.healthfood.health_sync_engine.repository.UserHealthConnectionRepository;
 import com.healthfood.health_sync_engine.service.GoogleFitSyncService;
+import com.healthfood.health_sync_engine.service.FitbitSyncService;
 import com.healthfood.health_sync_engine.util.EncryptionUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +26,7 @@ public class HealthSyncConsumer {
     private final UserHealthConnectionRepository connectionRepository;
     private final HealthMetricDailyRepository metricRepository;
     private final GoogleFitSyncService googleFitSyncService;
+    private final FitbitSyncService fitbitSyncService;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final EncryptionUtil encryptionUtil;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -35,11 +37,13 @@ public class HealthSyncConsumer {
     public HealthSyncConsumer(UserHealthConnectionRepository connectionRepository,
                               HealthMetricDailyRepository metricRepository,
                               GoogleFitSyncService googleFitSyncService,
+                              FitbitSyncService fitbitSyncService,
                               KafkaTemplate<String, String> kafkaTemplate,
                               EncryptionUtil encryptionUtil) {
         this.connectionRepository = connectionRepository;
         this.metricRepository = metricRepository;
         this.googleFitSyncService = googleFitSyncService;
+        this.fitbitSyncService = fitbitSyncService;
         this.kafkaTemplate = kafkaTemplate;
         this.encryptionUtil = encryptionUtil;
     }
@@ -90,6 +94,60 @@ public class HealthSyncConsumer {
                     metric.setDistance(encryptionUtil.encrypt(metric.getDistance()));
                     metric.setActiveMinutes(encryptionUtil.encrypt(metric.getActiveMinutes()));
                     if (metric.getHeartRate() != null) metric.setHeartRate(encryptionUtil.encrypt(metric.getHeartRate()));
+                    if (metric.getBloodOxygen() != null) metric.setBloodOxygen(encryptionUtil.encrypt(metric.getBloodOxygen()));
+                    if (metric.getSleepHours() != null) metric.setSleepHours(encryptionUtil.encrypt(metric.getSleepHours()));
+
+                    Optional<HealthMetricDaily> existing = metricRepository.findByUserIdAndDateAndSourceProvider(
+                            userId, metric.getDate(), provider);
+                    
+                    if (existing.isPresent()) {
+                        HealthMetricDaily m = existing.get();
+                        logger.info("Updating existing record for user {} on {}: Encrypting and saving.", 
+                            userId, metric.getDate());
+                        m.setSteps(metric.getSteps());
+                        m.setCalories(metric.getCalories());
+                        m.setDistance(metric.getDistance());
+                        m.setActiveMinutes(metric.getActiveMinutes());
+                        m.setHeartRate(metric.getHeartRate());
+                        m.setBloodOxygen(metric.getBloodOxygen());
+                        m.setSleepHours(metric.getSleepHours());
+                        m.setUpdatedAt(LocalDateTime.now());
+                        metricRepository.save(m);
+                    } else {
+                        logger.info("Creating new record for user {} on {}: Enriched and Encrypted.", 
+                            userId, metric.getDate());
+                        metricRepository.save(metric);
+                    }
+                }
+                
+                long duration = System.currentTimeMillis() - startTime;
+                connection.setLastSyncedAt(LocalDateTime.now());
+                connection.setSyncStatus(UserHealthConnection.HealthSyncStatus.SUCCESS);
+                connection.setLastSyncDuration((int) duration);
+                connection.setErrorMessage(null);
+                connection.setSyncRetryCount(0);
+                connectionRepository.save(connection);
+
+                // Notify data ingested
+                kafkaTemplate.send(ingestedTopic, objectMapper.writeValueAsString(Map.of(
+                        "userId", userId,
+                        "date", LocalDateTime.now().toString()
+                )));
+                
+                logger.info("Sync completed for user {} and provider {}", userId, provider);
+            } else if (provider == UserHealthConnection.HealthProvider.FITBIT) {
+                logger.info("Calling Fitbit API for user {} from {} to {}", userId, start, end);
+                List<HealthMetricDaily> metrics = fitbitSyncService.fetchActivity(decryptedToken, start, end, userId);
+                logger.info("Received {} daily metric buckets from Fitbit", metrics.size());
+
+                for (HealthMetricDaily metric : metrics) {
+                    // Encrypt metrics before saving
+                    metric.setSteps(encryptionUtil.encrypt(metric.getSteps()));
+                    metric.setCalories(encryptionUtil.encrypt(metric.getCalories()));
+                    metric.setDistance(encryptionUtil.encrypt(metric.getDistance()));
+                    metric.setActiveMinutes(encryptionUtil.encrypt(metric.getActiveMinutes()));
+                    if (metric.getHeartRate() != null) metric.setHeartRate(encryptionUtil.encrypt(metric.getHeartRate()));
+                    // Fitbit doesn't always provide SpO2 in summary, but if it does:
                     if (metric.getBloodOxygen() != null) metric.setBloodOxygen(encryptionUtil.encrypt(metric.getBloodOxygen()));
                     if (metric.getSleepHours() != null) metric.setSleepHours(encryptionUtil.encrypt(metric.getSleepHours()));
 

@@ -57,7 +57,7 @@ public class UserHealthConnection {
     private LocalDateTime updatedAt = LocalDateTime.now();
     
     public enum HealthProvider {
-        GOOGLE_FIT, APPLE_HEALTH, SAMSUNG_HEALTH, FITBIT
+        GOOGLE_FIT, APPLE_HEALTH, SAMSUNG_HEALTH, FITBIT, MANUAL
     }
 
     public enum ConnectionStatus {
